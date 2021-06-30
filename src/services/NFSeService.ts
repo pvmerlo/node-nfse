@@ -4,7 +4,9 @@ import { SoapService } from './SoapService';
 import { DadosDoPrestador } from '../models';
 import axios from 'axios';
 import '../helpers';
-import { Prefeitura } from '../constants/Prefeituras';
+import { Prefeitura, prefeituras } from '../constants/Prefeituras';
+import MissingArgumentException from '../exceptions/MissingArgumentException';
+import BadRequest from '../exceptions/BadRequest';
 
 function cleanToken(): IAuthToken {
   return {
@@ -21,19 +23,42 @@ export class NFSeService {
   prefeitura: Prefeitura;
   prestador: DadosDoPrestador;
 
-  constructor(partial?: Partial<NFSeService>) {
+  constructor(partial: Partial<NFSeService>) {
     Object.assign(this, partial || {});
 
     this.auth = cleanToken();
     this.cookie = cleanToken();
 
-    this.setAuthToken()
-      .then(() => {
-        this.setSiteCookie();
-      })
-      .catch(err => {
-        // console.log(this, err.message);
-      });
+    if (!this.login) {
+      throw new MissingArgumentException('O login é obrigatório para autenticação no serviço.');
+    }
+
+    if (!this.senha) {
+      throw new MissingArgumentException('A senha é obrigatória para autenticação no serviço.');
+    }
+
+    if (!this.prefeitura) {
+      throw new MissingArgumentException('A prefeitura é obrigatória para autenticação no serviço.');
+    }
+
+    if (
+      !prefeituras
+        .map(p => {
+          return p.municipio + p.estado;
+        })
+        .includes(this.prefeitura.municipio + this.prefeitura.estado)
+    ) {
+      throw new BadRequest('A prefeitura ainda não é atendida por este serviço.');
+    }
+
+    this.init().then(() => {
+      console.log('.:| NFSeService iniciado |:.');
+    });
+  }
+
+  async init() {
+    await this.setAuthToken();
+    await this.setSiteCookie();
   }
 
   get urlMunicipio() {
@@ -47,26 +72,22 @@ export class NFSeService {
     );
   }
 
-  private tokenExpirado(authToken: IAuthToken) {
+  private static tokenExpirado(authToken: IAuthToken) {
     return !authToken.token || authToken.lastRequest.diffNow('minutes').minutes >= 4;
   }
 
   private async setAuthToken(): Promise<void> {
-    if (this.tokenExpirado(this.auth)) {
+    console.log({ token: this.auth });
+
+    if (NFSeService.tokenExpirado(this.auth)) {
       this.auth.lastRequest = DateTime.now();
-      this.autenticarContribuinte()
-        .then(token => {
-          this.auth.token = token;
-        })
-        .catch(err => {
-          console.log(err);
-          console.log(err.response?.status, this.urlMunicipio);
-        });
+      this.auth.token = await this.autenticarContribuinte();
+      console.log({ token: this.auth.token });
     }
   }
 
   private async setSiteCookie(): Promise<void> {
-    if (this.tokenExpirado(this.cookie)) {
+    if (NFSeService.tokenExpirado(this.cookie)) {
       this.cookie.lastRequest = DateTime.now();
       const loginURL = this.urlMunicipio + '/paginas/sistema/login.jsf?e=expire';
       const login = await axios.get(loginURL);
@@ -74,8 +95,8 @@ export class NFSeService {
     }
   }
 
-  private autenticarContribuinte() {
-    return SoapService.doRequest(this.urlMunicipio, 'autenticarContribuinte', {
+  private async autenticarContribuinte(): Promise<any> {
+    return await SoapService.doRequest(this.urlMunicipio, 'autenticarContribuinte', {
       identificacaoPrestador: this.login,
       senha: this.senha
     });

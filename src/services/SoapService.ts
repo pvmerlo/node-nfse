@@ -32,7 +32,7 @@ export class SoapService {
         return xml2js.parseString(returnTag);
       }
     } catch (e) {
-      console.log(e.message);
+      throw e;
     }
   }
 }
